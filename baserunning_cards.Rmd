@@ -1,0 +1,272 @@
+---
+title: "Baserunning Cards - Misericordia"
+author: "2/23"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+park = "SWA"
+recalculate = F
+
+setwd("~/Documents/Rapsodo2020")
+
+suppressMessages(require(dplyr))
+suppressMessages(require(xml2))
+suppressMessages(require(tidyr))
+suppressMessages(require(rvest))
+suppressMessages(require(lubridate))
+suppressMessages(require(stringr))
+suppressMessages(require(lme4))
+suppressMessages(require(rstanarm))
+
+load("master_ncaa_team_lu.rda")
+load("ncaa_season_id_lu.rda")
+
+source("ncaa_scrape.R")
+source("get_ncaa_schedule_info.R")
+source("get_ncaa_baseball_pbp.R")
+source("bamify_pbp.R")
+source("get_pbp_conf.R")
+source("get_base_state.R")
+
+
+if (recalculate){
+  
+  load("pbpData19.rds");
+  #pbpData = readRDS("pbpData19_cm.RDS")
+  
+  pbpData_bam = bamify_pbp(pbpData)
+
+  re24_empirical = pbpData_bam%>%
+    filter(base_out_state != "000:3")%>%
+    group_by(base_out_state)%>%
+    summarise(re = mean(runs_to_end),
+              n = n())
+  
+  # re24_nb_model = stan_glmer(runs_to_end ~ -1 + base_out_state + venue_conf + (1|fielding_conf) + (1|batting_conf),
+  #                          family = neg_binomial_2, 
+  #                          data = pbpData_bam%>%filter(base_out_state != "000:3"), 
+  #                          QR = TRUE,
+  #                          chains = 1, iter = 500, cores = 4, seed = TRUE)
+  
+  # re24_negbinom_model = glmer.nb(runs_to_end ~ -1+ base_out_state + venue_conf + (1|fielding_conf) + (1|batting_conf), 
+  #                            data = pbpData_bam%>%filter(base_out_state != "000:3"), verbose = T)
+  # 
+  # re24_negbinom_vec = getME(re24_negbinom_model, "fixef")[0:24] + 
+  #   getME(re24_negbinom_model, "fixef")[which(names(getME(re24_negbinom_model, "fixef")) == paste0("venue_conf", park))]
+  # re24_empirical$negbinom_fixed_effect = exp(re24_negbinom_vec)
+  
+}else{
+  
+  #load("~/Documents/swat_images/cent_mac.RData")
+  #pbpData_bam = readRDS("~/Documents/swat_images/pbpData_bam_cent.RDS")
+  re24_empirical = readRDS("~/Documents/swat_images/re24_empirical_cent_19.RDS")
+  
+}
+
+
+
+
+emp_matrix = outer(c(re24_empirical$re, 0), c(re24_empirical$re, 0), '-')
+rownames(emp_matrix) = c(re24_empirical$base_out_state, "EOI")
+colnames(emp_matrix) = c(re24_empirical$base_out_state, "EOI")
+# 
+# negbinom_matrix = outer(c(re24_empirical$negbinom_fixed_effect, 0), c(re24_empirical$negbinom_fixed_effect, 0), '-')
+# rownames(negbinom_matrix) = c(re24_empirical$base_out_state, "EOI")
+# colnames(negbinom_matrix) = c(re24_empirical$base_out_state, "EOI")
+
+calculate_breakeven <- function(play, re24_delta_mat){
+  
+  start = play[1]; safe = play[2]; out = play[3]; score_y = as.numeric(play[4]); score_n = as.numeric(play[5])
+  
+  re_safe = re24_delta_mat[which(colnames(re24_delta_mat) == safe), which(colnames(re24_delta_mat) == start)] 
+  re_out = re24_delta_mat[which(colnames(re24_delta_mat) == out), which(colnames(re24_delta_mat) == start)]
+  
+  if (re_safe< 0){
+    re_safe = .067
+  }
+  
+  breakeven = (-re_out + score_n)/(-re_out + score_n + re_safe + score_y)
+  
+  return(breakeven)
+}
+
+
+
+steal_2b_scenarios = list(
+  
+  "100:0" = c("100:0", "020:0", "000:1", 0, 0), 
+  "100:1" = c("100:1", "020:1", "000:2", 0,0),
+  "100:2" = c("100:2", "020:2", "EOI", 0, 0),
+  "103:0" = c("103:0", "023:0", "003:1", 0, 0), 
+  "103:1" = c("103:1", "023:1", "003:2", 0, 0),
+  "103:2" = c("103:2", "023:2", "EOI", 0, 0)
+  
+)
+
+
+steal_3b_scenarios = list(
+  
+  "020:0" = c("020:0", "003:0", "000:1", 0, 0), 
+  "020:1" = c("020:1", "003:1", "000:2", 0, 0),
+  "020:2" = c("020:2", "003:2", "EOI", 0, 0),
+  "120:0" = c("120:0", "023:0", "020:1", 0, 0), 
+  "120:1" = c("120:1", "023:1", "020:2", 0, 0),
+  "120:2" = c("120:2", "023:2", "EOI", 0, 0)
+  
+)
+
+
+second_home_scenarios = list(
+  
+  "020:0" = c("020:0", "020:0", "020:1", 1, 0), 
+  "020:1" = c("020:1", "020:1", "020:2", 1, 0),
+  "020:2" = c("020:2", "020:2", "EOI", 1, 0),
+  "120:0" = c("120:0", "023:0", "023:1", 1, 0), 
+  "120:1" = c("120:1", "023:1", "023:2", 1, 0),
+  "120:2" = c("120:2", "023:2", "EOI", 1, 0)
+  
+)
+
+
+first_third_scenarios = list(
+  
+  "100:0" = c("100:0", "103:0", "100:1", 0, 0), 
+  "100:1" = c("100:1", "103:1", "100:2", 0, 0),
+  "100:2" = c("100:2", "103:2", "EOI", 0, 0),
+  "103:0" = c("103:0", "103:0", "100:1", 1, 1), 
+  "103:1" = c("103:1", "103:1", "100:2", 1, 1),
+  "103:2" = c("103:2", "103:2", "EOI", 1, 1)
+  
+)
+
+
+sac_fly_third_scenarios = list(
+  #assume all others hold
+  "003:0" = c("003:0", "000:1", "000:2", 1, 0),
+  "003:1" = c("003:1", "000:2", "EOI", 1, 0),
+  "023:0" = c("023:0", "020:1", "020:2", 1,0),
+  "023:1" = c("023:1", "020:2", "EOI", 1, 0),
+  "103:0" = c("103:0", "100:1", "100:2", 1, 0),
+  "103:1" = c("103:1", "100:2", "EOI", 1, 0),
+  "123:0" = c("123:0", "120:1", "120:2", 1, 0),
+  "123:1" = c("123:1", "120:2", "EOI", 1, 0)
+  
+  
+)
+
+
+second_be = lapply(steal_2b_scenarios, calculate_breakeven, emp_matrix)%>%
+  do.call("rbind", .)%>%
+  data.frame()%>%
+  `colnames<-`(c("break_even_pct"))
+second_be$bo = names(steal_2b_scenarios)
+rownames(second_be) = NULL
+
+
+third_be = lapply(steal_3b_scenarios, calculate_breakeven, emp_matrix)%>%
+  do.call("rbind", .)%>%
+  data.frame()%>%
+  `colnames<-`(c("break_even_pct"))
+third_be$bo = names(steal_3b_scenarios)
+rownames(third_be) = NULL
+
+
+second_home_be = lapply(second_home_scenarios, calculate_breakeven, emp_matrix)%>%
+  do.call("rbind", .)%>%
+  data.frame()%>%
+  `colnames<-`(c("break_even_pct"))
+second_home_be$bo = names(second_home_scenarios)
+rownames(second_home_be) = NULL
+
+
+first_third_be = lapply(first_third_scenarios, calculate_breakeven, emp_matrix)%>%
+  do.call("rbind", .)%>%
+  data.frame()%>%
+  `colnames<-`(c("break_even_pct"))
+first_third_be$bo = names(first_third_scenarios)
+rownames(first_third_be) = NULL
+
+
+sac_fly_third_be = lapply(sac_fly_third_scenarios, calculate_breakeven, emp_matrix)%>%
+  do.call("rbind", .)%>%
+  data.frame()%>%
+  `colnames<-`(c("break_even_pct"))
+sac_fly_third_be$bo = names(sac_fly_third_scenarios)
+rownames(sac_fly_third_be) = NULL
+
+
+
+second_be_tidy = second_be%>%
+  separate(bo, into = c("base_state", "outs"), sep = ":")%>%
+  pivot_wider(names_from = outs, values_from = break_even_pct)
+
+
+third_be_tidy = third_be%>%
+  separate(bo, into = c("base_state", "outs"), sep = ":")%>%
+  pivot_wider(names_from = outs, values_from = break_even_pct)
+
+
+second_home_be_tidy = second_home_be%>%
+  separate(bo, into = c("base_state", "outs"), sep = ":")%>%
+  pivot_wider(names_from = outs, values_from = break_even_pct)
+
+first_third_be_tidy = first_third_be%>%
+  separate(bo, into = c("base_state", "outs"), sep = ":")%>%
+  pivot_wider(names_from = outs, values_from = break_even_pct)
+
+sac_fly_third_be_tidy = sac_fly_third_be%>%
+  separate(bo, into = c("base_state", "outs"), sep = ":")%>%
+  pivot_wider(names_from = outs, values_from = break_even_pct)
+```
+
+```{r, echo = F}
+a <- knitr::kable(second_be_tidy%>%mutate_if(is.numeric, round, 3))
+b <- knitr::kable(third_be_tidy%>%mutate_if(is.numeric, round, 3))
+c <- knitr::kable(second_home_be_tidy%>%mutate_if(is.numeric, round, 3))
+d <- knitr::kable(first_third_be_tidy%>%mutate_if(is.numeric, round, 3))
+e <- knitr::kable(sac_fly_third_be_tidy%>%mutate_if(is.numeric, round, 3))
+```
+
+\begin{center}
+\textbf{Steal 2B Breakeven Probabilities}
+\end{center}
+```{r, echo = F, results = 'asis'}
+a
+```
+
+\begin{center}
+\textbf{Steal 3B Breakeven Probabilities}
+\end{center}
+```{r, echo = F, results = 'asis'}
+b
+```
+
+\begin{center}
+\textbf{2B to Home Breakeven Probabilities}
+\end{center}
+```{r, echo = F, results = 'asis'}
+c
+```
+
+\begin{center}
+\textbf{1B to 3B Breakeven Probabilities}
+\end{center}
+```{r, echo = F, results = 'asis'}
+d
+```
+
+
+\begin{center}
+\textbf{Sac Fly 3B Probabilities}
+\end{center}
+```{r, echo = F, results = 'asis'}
+e
+```
+
+
+
+
+

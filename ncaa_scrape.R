@@ -15,8 +15,12 @@
 #' ncaa_scrape(255, 2013, "batting")
 #' }
 
-ncaa_scrape <- function(teamid, year, type) {
 
+
+ncaa_scrape <- function(teamid, year, type) {
+	
+  
+  
   if (year < 2013) {
     stop('you must provide a year that is equal to or greater than 2013')
   }
@@ -61,3 +65,15 @@ ncaa_scrape <- function(teamid, year, type) {
     return(df)
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
